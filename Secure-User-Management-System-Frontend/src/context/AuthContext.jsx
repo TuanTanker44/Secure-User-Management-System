@@ -1,0 +1,121 @@
+import { createContext, useState, useEffect } from "react";
+import axios from "axios";
+
+const AuthContext = createContext();
+
+const AuthProvider = ({ children }) => {
+  const [accessToken, setAccessToken] = useState("");
+  const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      const token = localStorage.getItem("accessToken");
+      if (!token) return;
+
+      try {
+        const meRes = await axios.get("http://localhost:5000/v1/user/me", {
+          headers: { Authorization: `Bearer ${token}` },
+          withCredentials: true,
+        });
+        setCurrentUser(meRes.data);
+      } catch (error) {
+        console.error("Failed to fetch user profile:", error);
+
+        // Nếu lỗi 401 -> thử refresh
+        if (error.response?.status === 401) {
+          try {
+            const refreshRes = await axios.post(
+              "http://localhost:5000/v1/auth/refresh",
+              {},
+              { withCredentials: true }
+            );
+
+            const newToken = refreshRes.data.accessToken;
+            localStorage.setItem("accessToken", newToken);
+
+            // Retry lại request /me
+            const meRes = await axios.get("http://localhost:5000/v1/user/me", {
+              headers: { Authorization: `Bearer ${newToken}` },
+              withCredentials: true,
+            });
+            setCurrentUser(meRes.data);
+          } catch (refreshError) {
+            console.error("Refresh failed:", refreshError);
+            setCurrentUser(null);
+            localStorage.removeItem("accessToken");
+            window.location.href = "/login"; // Chỉ redirect nếu refresh cũng fail
+          }
+        } else {
+          setCurrentUser(null);
+        }
+      }
+    };
+
+    fetchUser();
+  }, []);
+
+  // Hàm login
+  const login = async (username, password) => {
+    console.log("Attempting login...");
+    try {
+      const loginRes = await axios.post(
+        "http://localhost:5000/v1/auth/login",
+        { username, password },
+        { withCredentials: true }
+      );
+      setAccessToken(loginRes.data.accessToken);
+      localStorage.setItem("accessToken", loginRes.data.accessToken);
+
+      // Gọi API /me để lấy thông tin user
+      try {
+        const meRes = await axios.get("http://localhost:5000/v1/user/me", {
+          headers: {
+            Authorization: `Bearer ${loginRes.data.accessToken}`,
+          },
+          withCredentials: true,
+        });
+        setCurrentUser(meRes.data);
+      } catch (meErr) {
+        console.error("Failed to fetch user profile:", meErr);
+        setCurrentUser(null);
+      }
+    } catch (loginErr) {
+      console.error("Login failed", loginErr);
+      throw loginErr;
+    }
+  };
+
+  // Hàm logout
+  const logout = async () => {
+    try {
+      await axios.post(
+        "http://localhost:5000/v1/auth/logout",
+        {},
+        { withCredentials: true }
+      );
+      setCurrentUser(null);
+      localStorage.removeItem("currentUser");
+    } catch (err) {
+      console.error("Logout failed", err);
+    } finally {
+      setCurrentUser(null);
+    }
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        accessToken,
+        setAccessToken,
+        currentUser,
+        setCurrentUser,
+        login,
+        logout,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export { AuthContext, AuthProvider };
